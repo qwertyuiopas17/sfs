@@ -1784,7 +1784,8 @@ if __name__ == "__main__":
             logger.error(f"Failed to track startup metrics: {e}")
     
     # Start the Flask application
-    app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
