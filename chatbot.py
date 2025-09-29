@@ -83,7 +83,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, supports_credentials=True, resources={
     r"/v1/*": {
-        "origins": re.compile(r"https?://(localhost|127\.0\.0\.1)(:\d+)?"),
+        "origins": "*",
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
     }
@@ -1778,6 +1778,7 @@ if __name__ == "__main__":
     
     # Start the Flask application
     app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+
 
 
 
