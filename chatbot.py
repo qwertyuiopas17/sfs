@@ -402,7 +402,7 @@ def register():
 
         email = data.get("email", "").strip().lower()
         password = data.get("password", "")
-        full_name = data.get("fullName", "").strip()
+        username = data.get("fullName", "").strip()
         phone_number = data.get("phoneNumber", "").strip()
         patient_id = data.get("patientId", "").strip()
         village = data.get("village", "").strip()
@@ -414,9 +414,13 @@ def register():
         errors = []
         if not email or "@" not in email: errors.append("Valid email is required")
         if not password or len(password) < 8: errors.append("Password must be at least 8 characters")
-        if not full_name: errors.append("Full name is required")
+        if not username: errors.append("Full name is required")
         if errors:
             return jsonify({"success": False, "message": "Fix the errors below.", "errors": errors}), 400
+        # Auto-generate patient ID
+        last_user = User.query.order_by(User.id.desc()).first()
+        seq = last_user.id + 1 if last_user else 1
+        patient_id = f"PAT{str(seq).zfill(6)}"
 
         # Uniqueness check on email or patient_id
         existing = User.query.filter(
@@ -434,7 +438,7 @@ def register():
         new_user = User(
             patient_id=patient_id,
             email=email,
-            full_name=full_name,
+            username=username, # Save to the new 'username' field
             phone_number=phone_number,
             village=village,
             district=district,
@@ -461,10 +465,10 @@ def register():
         return jsonify({
             "success": True,
             "patientId": patient_id,
-            "message": f"Welcome {full_name}! Your account has been created.",
+            "message": f"Welcome {username}! Your account has been created.",
             "user": {
                 "patientId": patient_id,
-                "fullName": full_name,
+                "username": username, # Return username instead of fullName
                 "email": email,
                 "phoneNumber": phone_number,
                 "location": ", ".join([village, district, state, pincode]).strip(", "),
@@ -490,15 +494,15 @@ def login():
         if not login_identifier or not password:
             return jsonify({"success": False, "message": "Username and password are required."}), 400
 
-        # --- THIS IS THE CORRECTED LOGIC ---
-        # It now checks if the identifier is an email or a patient_id
+       # --- THIS IS THE CORRECTED LOGIN LOGIC ---
+        # It now checks for email first, otherwise assumes it's a username
         if '@' in login_identifier:
-            user = User.query.filter_by(email=login_identifier.lower(), is_active=True).first()
+            user = User.query.filter_by(email=login_identifier.lower()).first()
         else:
-            user = User.query.filter_by(patient_id=login_identifier, is_active=True).first()
+            user = User.query.filter_by(username=login_identifier).first()
         # --- END OF CORRECTION ---
 
-        if user and user.check_password(password):
+        if user and user.is_active and user.check_password(password):
             user.update_last_login()
             db.session.commit()
             session.permanent = True
@@ -515,15 +519,17 @@ def login():
             
             return jsonify({
                 "success": True,
-                "message": f"Welcome back, {user.full_name}!",
+                "message": f"Welcome back, {user.username}!",
                 "user": {
                     "patientId": user.patient_id,
-                    "fullName": user.full_name,
+                    "username": user.username,
                     "email": user.email,
                     "role": user.role
                 },
                 "statistics": stats
             })
+        if user and not user.is_active:
+             return jsonify({"success": False, "message": "This account is inactive."}), 403
 
         update_system_state('login', success=False)
         return jsonify({"success": False, "message": "Invalid credentials or account inactive."}), 401
@@ -1776,4 +1782,3 @@ if __name__ == "__main__":
     
     # Start the Flask application
     app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
-
