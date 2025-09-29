@@ -402,7 +402,7 @@ def register():
 
         email = data.get("email", "").strip().lower()
         password = data.get("password", "")
-        full_name = data.get("patientId", "").strip()
+        full_name = data.get("fullName", "").strip()
         phone_number = data.get("phoneNumber", "").strip()
         patient_id = data.get("patientId", "").strip()
         village = data.get("village", "").strip()
@@ -1776,3 +1776,4 @@ if __name__ == "__main__":
     
     # Start the Flask application
     app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+
