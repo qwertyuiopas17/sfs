@@ -83,10 +83,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 CORS(app, supports_credentials=True, resources={
     r"/v1/*": {
-        "origins": [
-            "http://127.0.0.1:5500",  # Your local VS Code Live Server
-            "http://localhost:5500",   # Your local VS Code Live Server
-            "https://saharasaathi.netlify.app"], # IMPORTANT: Add your deployed frontend's URL here later
+        "origins": re.compile(r"https?://(localhost|127\.0\.0\.1)(:\d+)?"),
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
     }
@@ -1781,5 +1778,6 @@ if __name__ == "__main__":
     
     # Start the Flask application
     app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+
 
 
