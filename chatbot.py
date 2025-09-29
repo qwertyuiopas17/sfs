@@ -81,13 +81,20 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask application with enhanced configuration
 app = Flask(__name__)
+# Replace your existing CORS(app, ...) with:
 CORS(app, supports_credentials=True, resources={
-    r"/v1/*": {
-        "origins": "*",
+    r"/*": {  # Changed from r"/v1/*" to r"/*" - covers ALL routes
+        "origins": [
+            "http://127.0.0.1:5500",
+            "http://localhost:5500", 
+            "https://saharasaathi.netlify.app",
+            "*"  # Allow all origins for static files
+        ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"]
     }
 })
+
 
 # Enhanced security configuration
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
@@ -1778,6 +1785,7 @@ if __name__ == "__main__":
     
     # Start the Flask application
     app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+
 
 
 
