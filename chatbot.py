@@ -93,18 +93,14 @@ CORS(app, supports_credentials=True, resources={
 })
 
 
-# --- FIX #1: ENHANCED & SECURE SESSION CONFIGURATION ---
-# This dynamically sets cookie security for production (like Render) vs. local development.
-IS_PRODUCTION = 'RENDER' in os.environ
-
+# Enhanced security configuration
 app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.config.update(
+    SESSION_COOKIE_SECURE=False,  # Set to True in production with HTTPS
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='None' if IS_PRODUCTION else 'Lax',
-    SESSION_COOKIE_SECURE=IS_PRODUCTION,  # True in production (HTTPS), False for local (HTTP)
+    SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(hours=24)
 )
-
 
 # Enhanced database configuration
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -269,6 +265,8 @@ def save_all_models():
             conversation_memory.save_to_file(os.path.join(models_path, 'conversation_memory.json'))
             logger.info("Conversation memory saved")
 
+        # Crisis detector model saving removed as it's no longer used
+
         logger.info("All models saved successfully")
         return True
     except Exception as e:
@@ -279,109 +277,199 @@ def track_system_metrics():
     """Tracks and updates system-wide metrics for the Admin dashboard."""
     try:
         today = datetime.now().date()
+
+        # Avoid creating duplicate metrics for the same day
         if SystemMetrics.query.filter_by(metrics_date=today).first():
+            logger.info(f"Metrics for {today} already exist. Skipping.")
             return
+
         start_of_day = datetime.combine(today, datetime.min.time())
+
+        # Calculate metrics for today
+        active_users = User.query.filter(User.last_login >= start_of_day).count()
+        new_users = User.query.filter(User.created_at >= start_of_day).count()
+        total_convos = ConversationTurn.query.filter(ConversationTurn.timestamp >= start_of_day).count()
+        appts_booked = Appointment.query.filter(Appointment.created_at >= start_of_day).count()
+        orders_placed = MedicineOrder.query.filter(MedicineOrder.created_at >= start_of_day).count()
+
+        # You would add grievances and prescriptions issued counts here as well
+
         metrics = SystemMetrics(
             metrics_date=today,
-            total_active_users=User.query.filter(User.last_login >= start_of_day).count(),
-            new_users_registered=User.query.filter(User.created_at >= start_of_day).count(),
-            total_conversations=ConversationTurn.query.filter(ConversationTurn.timestamp >= start_of_day).count(),
-            appointments_booked=Appointment.query.filter(Appointment.created_at >= start_of_day).count(),
-            orders_placed=MedicineOrder.query.filter(MedicineOrder.created_at >= start_of_day).count()
+            total_active_users=active_users,
+            new_users_registered=new_users,
+            total_conversations=total_convos,
+            appointments_booked=appts_booked,
+            orders_placed=orders_placed
         )
+
         db.session.add(metrics)
         db.session.commit()
         logger.info(f"✅ Admin System Metrics updated for {today}")
+
     except Exception as e:
         logger.error(f"❌ Error tracking system metrics: {e}")
         db.session.rollback()
 
 def get_current_user():
-    """Security helper to get current authenticated user from session"""
+    """Security helper to get current authenticated user"""
     user_id = session.get('user_id')
     if user_id:
         try:
-            return User.query.get(user_id)
+            # Fetch user with role information
+            user = User.query.get(user_id)
+            if user:
+                # Dynamically add role if it exists on the model, otherwise default
+                user.role = getattr(user, 'role', 'patient')
+            return user
         except Exception as e:
             logger.error(f"Error retrieving user {user_id}: {e}")
+            return None
     return None
 
 def admin_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
         user = get_current_user()
-        if not user or getattr(user, "role", "patient") != "admin":
-            return jsonify({"error": "Forbidden or not authenticated"}), 403
+        if not user:
+            return jsonify({"error": "Authentication required"}), 401
+        # Assuming User model has a 'role' attribute, default to 'patient' if not present
+        if getattr(user, "role", "patient") != "admin":
+            return jsonify({"error": "Forbidden"}), 403
         return f(*args, **kwargs)
     return wrapper
 
 def create_user_session(user: User, request_info: dict):
+    """Create and track user session"""
     try:
         user_session = UserSession(
             user_id=user.id,
             ip_address=request_info.get('remote_addr', '')[:45],
             user_agent=request_info.get('user_agent', '')[:500],
-            device_type='mobile' if any(m in request_info.get('user_agent', '').lower() for m in ['mobile', 'android', 'iphone']) else 'desktop'
+            device_type=determine_device_type(request_info.get('user_agent', ''))
         )
+
         db.session.add(user_session)
         db.session.commit()
+
+        # Store session ID for later reference
         session['session_record_id'] = user_session.id
+
     except Exception as e:
         logger.error(f"Error creating user session: {e}")
 
+def determine_device_type(user_agent: str) -> str:
+    """Determine device type from user agent"""
+    user_agent = user_agent.lower()
+    if any(mobile in user_agent for mobile in ['mobile', 'android', 'iphone']):
+        return 'mobile'
+    elif 'tablet' in user_agent or 'ipad' in user_agent:
+        return 'tablet'
+    else:
+        return 'desktop'
+
 def end_user_session():
+    """End current user session"""
     try:
         session_id = session.get('session_record_id')
-        if session_id and (user_session := UserSession.query.get(session_id)):
-            user_session.end_session()
-            db.session.commit()
+        if session_id:
+            user_session = UserSession.query.get(session_id)
+            if user_session:
+                user_session.end_session()
+                db.session.commit()
     except Exception as e:
         logger.error(f"Error ending user session: {e}")
+
+def convert_numpy_types(obj):
+    """Recursively converts numpy types to native Python types in a dictionary."""
+    if isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(element) for element in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
 
 # Enhanced API Routes with comprehensive functionality
 @app.route("/v1/register", methods=["POST"])
 def register():
     try:
+        update_system_state('register')
         data = request.get_json()
-        if not data or not all(k in data for k in ["email", "password", "fullName"]):
-            return jsonify({"success": False, "message": "Missing required fields."}), 400
-        
-        email = data["email"].strip().lower()
-        full_name = data["fullName"].strip()
+        if not data:
+            return jsonify({"success": False, "message": "No data provided."}), 400
 
-        if User.query.filter((User.full_name == full_name) | (User.email == email)).first():
+        email = data.get("email", "").strip().lower()
+        password = data.get("password", "")
+        full_name = data.get("fullName", "").strip()
+        phone_number = data.get("phoneNumber", "").strip()
+        village = data.get("village", "").strip()
+        district = data.get("district", "").strip()
+        state = data.get("state", "Punjab").strip()
+        pincode = data.get("pincode", "").strip()
+        preferred_language = data.get("preferredLanguage", "hi").strip()
+
+        # Validate required fields
+        errors = []
+        if not full_name: errors.append("Full name is required")
+        if not email or "@" not in email: errors.append("Valid email is required")
+        if not password or len(password) < 8: errors.append("Password must be at least 8 characters")
+        if errors:
+            return jsonify({"success": False, "message": "Fix the errors below.", "errors": errors}), 400
+
+        # Check if the full name or email is already taken
+        existing_user = User.query.filter((User.full_name == full_name) | (User.email == email)).first()
+        if existing_user:
             return jsonify({"success": False, "message": "A user with this name or email already exists."}), 409
 
+        # Auto-generate patient ID
         last_user = User.query.order_by(User.id.desc()).first()
-        patient_id = f"PAT{str((last_user.id if last_user else 0) + 1).zfill(6)}"
+        seq = last_user.id + 1 if last_user else 1
+        patient_id = f"PAT{str(seq).zfill(6)}"
 
         new_user = User(
             patient_id=patient_id,
             email=email,
             full_name=full_name,
-            phone_number=data.get("phoneNumber", "").strip(),
-            village=data.get("village", "").strip(),
-            district=data.get("district", "").strip(),
-            preferred_language=data.get("preferredLanguage", "hi").strip(),
-            role='patient'
+            phone_number=phone_number,
+            village=village,
+            district=district,
+            state=state,
+            pincode=pincode,
+            preferred_language=preferred_language
         )
-        new_user.set_password(data["password"])
+        new_user.set_password(password)
+        # --- FIX: Explicitly set the role for new patient registrations to prevent DB errors ---
+        new_user.role = 'patient'
+
         db.session.add(new_user)
         db.session.commit()
 
+        logger.info(f"✅ New patient registered: {full_name} ({patient_id})")
         return jsonify({
-            "success": True, "message": f"Welcome {full_name}! Your account has been created.",
-            "patientId": patient_id, "fullName": full_name
+            "success": True,
+            "message": f"Welcome {full_name}! Your account has been created.",
+            "patientId": patient_id,
+            "fullName": full_name
         }), 201
+
     except Exception as e:
-        logger.error(f"Registration error: {e}", exc_info=True)
+        # --- FIX: Added more detailed logging for registration errors ---
+        logger.error(f"❌ Registration error for data: {data}. Exception: {e}")
+        logger.error(traceback.format_exc())
         db.session.rollback()
-        return jsonify({"success": False, "message": "Registration failed due to a server error."}), 500
+        update_system_state('register', success=False)
+        return jsonify({"success": False, "message": "An internal error occurred during registration. Please try again."}), 500
 
 @app.route("/v1/login", methods=["POST"])
 def login():
     try:
+        update_system_state('login')
         data = request.get_json() or {}
         login_identifier = data.get("patientId", "").strip()
         password = data.get("password", "")
@@ -389,145 +477,443 @@ def login():
         if not login_identifier or not password:
             return jsonify({"success": False, "message": "Username and password are required."}), 400
 
-        user = User.query.filter(
-            (User.email == login_identifier.lower()) | 
-            (User.patient_id == login_identifier.upper()) | 
-            (User.full_name == login_identifier)
-        ).first()
+        # --- FIX: Enhanced query to find user by email, patient_id, or full_name ---
+        user = None
+        if '@' in login_identifier:
+            user = User.query.filter_by(email=login_identifier.lower()).first()
+        elif login_identifier.upper().startswith('PAT'):
+            user = User.query.filter_by(patient_id=login_identifier.upper()).first()
+
+        # Fallback to check by name if not found by email or ID
+        if not user:
+            user = User.query.filter_by(full_name=login_identifier).first()
 
         if user and user.is_active and user.check_password(password):
             user.update_last_login()
+            db.session.commit()
             session.permanent = True
             session['user_id'] = user.id
-            create_user_session(user, {'remote_addr': request.remote_addr, 'user_agent': str(request.user_agent)})
-            db.session.commit()
-            
-            return jsonify({
-                "success": True, "message": f"Welcome back, {user.full_name}!",
-                "user": {"patientId": user.patient_id, "username": user.full_name, "email": user.email, "role": user.role}
+            session['patient_id'] = user.patient_id
+            session['login_time'] = datetime.now().isoformat()
+
+            create_user_session(user, {
+                'remote_addr': request.environ.get('REMOTE_ADDR'),
+                'user_agent': request.environ.get('HTTP_USER_AGENT')
             })
+
+            stats = get_user_statistics(user.id) or {}
+
+            logger.info(f"✅ User login successful: {user.full_name} ({user.patient_id}) with role '{user.role}'")
+            # --- FIX: Return user role to frontend for proper redirection ---
+            return jsonify({
+                "success": True,
+                "message": f"Welcome back, {user.full_name}!",
+                "user": {
+                    "patientId": user.patient_id,
+                    "username": user.full_name,
+                    "email": user.email,
+                    "role": user.role # This is crucial for the frontend
+                },
+                "statistics": stats
+            })
+        if user and not user.is_active:
+             return jsonify({"success": False, "message": "This account is inactive."}), 403
         
+        logger.warning(f"⚠️ Failed login attempt for identifier: '{login_identifier}'")
+        update_system_state('login', success=False)
         return jsonify({"success": False, "message": "Invalid credentials or account inactive."}), 401
+
     except Exception as e:
-        logger.error(f"Login error: {e}", exc_info=True)
-        return jsonify({"success": False, "message": "Login failed due to server error."}), 500
+        logger.error(f"❌ Login error: {e}")
+        logger.error(traceback.format_exc())
+        update_system_state('login', success=False)
+        return jsonify({"success": False, "message": "Login failed due to a server error."}), 500
+
 
 @app.route("/v1/logout", methods=["POST"])
 def logout():
-    end_user_session()
-    session.clear()
-    return jsonify({"success": True, "message": "You have been logged out successfully."})
+    """Enhanced user logout with session cleanup"""
+    try:
+        # End user session tracking
+        end_user_session()
+
+        # Clear session
+        session.clear()
+
+        logger.info("✅ User logged out successfully")
+
+        return jsonify({
+            "success": True,
+            "message": "You have been logged out successfully."
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Logout error: {e}")
+        return jsonify({
+            "success": True,  # Always succeed logout for security
+            "message": "Logged out successfully."
+        })
 
 @app.route("/v1/predict", methods=["POST"])
 def predict():
-    # --- FIX #2: USE SESSION FOR AUTHENTICATION ---
-    current_user = get_current_user()
-    if not current_user:
-        return jsonify({"error": "Authentication required."}), 401
-    
+    if not all([nlu_processor, response_generator, conversation_memory]):
+        return jsonify({"error": True, "message": "AI components unavailable"}), 503
+
     data = {}
     try:
         start_time = time.time()
+        update_system_state('predict')
+
         data = request.get_json() or {}
         user_message = (data.get("message") or "").strip()
-        if not user_message:
-            return jsonify({"error": "Message is required."}), 400
+        image_b64 = data.get("imageData")
+        user_id_str = (data.get("userId") or "").strip()
+        context = data.get("context", {}) or {}
 
+        # Add logging to track incoming requests
+        logger.info(f"🔍 /v1/predict called - userId: {user_id_str}, message: {user_message[:100]}...")
+
+        if not user_id_str:
+            return jsonify({"error": "User ID is required."}), 400
+        if not user_message and not image_b64:
+            return jsonify({"error": "Either message or imageData is required."}), 400
+
+        # Load current user by patient_id
+        current_user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
+        if not current_user:
+            return jsonify({"error": "User not found.", "login_required": True}), 401
+
+        # Detect language from message
+        detected_language_code = "en"
+        if user_message:
+            try:
+                lang = detect(user_message)
+                detected_language_code = 'hi' if lang == 'hi' else ('pa' if lang == 'pa' else 'en')
+            except LangDetectException:
+                detected_language_code = current_user.preferred_language or "en"
+
+        # --- FIX #1 START ---
+        # Build short NLU history using the correct method
         history_turns = conversation_memory.get_conversation_context(current_user.patient_id, turns=4)
-        nlu_history = [
-            {'role': 'user' if i % 2 == 0 else 'assistant', 'content': turn.get('user_message' if i % 2 == 0 else 'bot_response', '')}
-            for i, turn in enumerate(history_turns)
-        ]
+        nlu_history = []
+        for turn in history_turns:
+            nlu_history.append({'role': 'user', 'content': turn.get('user_message', '')})
+            # The bot_response from memory is a JSON string, so we parse it to get the text part
+            try:
+                bot_response_json = json.loads(turn.get('bot_response', '{}'))
+                bot_content = bot_response_json.get('response', '')
+            except (json.JSONDecodeError, AttributeError):
+                bot_content = turn.get('bot_response', '') # Fallback for non-JSON responses
+            nlu_history.append({'role': 'assistant', 'content': bot_content})
+        # --- FIX #1 END ---
 
-        nlu_understanding = nlu_processor.understand_user_intent(user_message, conversation_history=nlu_history)
-        
-        if (nlu_understanding.get('primary_intent') == 'emergency_assistance'):
-            action_payload = {"response": "Emergency detected. Connecting to services.", "action": "TRIGGER_SOS"}
+        # Optional Scout for emojis/images
+        effective_message = user_message
+        scout_text = None
+        contains_emoji = bool(re.search(r"[\U0001F300-\U0001FAFF\U00002600-\U000026FF]", user_message))
+        multimodal_triggered = bool(image_b64) or contains_emoji
+        if multimodal_triggered and groq_scout and groq_scout.is_available:
+            if image_b64:
+                scout_text = groq_scout.interpret_image(user_message=user_message, image_b64=image_b64, language=detected_language_code, context_history=nlu_history)
+            else:
+                scout_text = groq_scout.interpret_emojis(user_message=user_message, language=detected_language_code, context_history=nlu_history)
+            effective_message = f"Interpreted content: {scout_text}\n\nOriginal: {user_message}" if scout_text else user_message
+
+        # NLU: Sehat Sahara intents
+        nlu_understanding = nlu_processor.understand_user_intent(effective_message, conversation_history=nlu_history)
+
+        # Emergency handling protocol
+        is_emergency = (nlu_understanding.get('primary_intent') == 'emergency_assistance') or (nlu_understanding.get('urgency_level') == 'emergency')
+        if is_emergency:
+            action_payload = {
+                "response": "Emergency detected. Connecting to emergency services. For ambulance, call 108.",
+                "action": "TRIGGER_SOS",
+                "parameters": {"emergency_number": "108", "type": "medical_emergency"}
+            }
+            update_system_state('predict', sos_triggered=1)
         else:
-            action_payload_str = sehat_sahara_client.generate_sehatsahara_response(
-                user_message=user_message, user_intent=nlu_understanding.get('primary_intent'),
-                conversation_stage=nlu_understanding.get('conversation_stage'), context_history=nlu_history
-            ) if sehat_sahara_client.is_available else None
-            
-            if action_payload_str:
-                try:
-                    action_payload = json.loads(action_payload_str)
-                except json.JSONDecodeError: action_payload = None
-            
+            action_payload_str = None
+            action_payload = None
+            if sehat_sahara_client and sehat_sahara_client.is_available:
+                # --- FIX #2 START ---
+                # Use the correct method name: generate_sehatsahara_response
+                action_payload_str = sehat_sahara_client.generate_sehatsahara_response(
+                    user_message=effective_message,
+                    user_intent=nlu_understanding.get('primary_intent'),
+                    conversation_stage=nlu_understanding.get('conversation_stage'),
+                    severity_score=0.5, # Placeholder, you can develop this
+                    context_history=nlu_history,
+                    language=detected_language_code
+                )
+                # --- FIX #2 END ---
+                if action_payload_str:
+                    try:
+                        action_payload = json.loads(action_payload_str)
+                    except json.JSONDecodeError:
+                        logger.warning("API returned invalid JSON. Falling back to local generator.")
+                        action_payload = None
+
+            # Fallback to local response generator if API unavailable or fails
             if not action_payload:
+                update_system_state('predict', fallback_responses=1)
                 action_payload = response_generator.generate_response(
-                    user_message=user_message, nlu_result=nlu_understanding, 
-                    user_context={"user_id": current_user.patient_id}
+                    user_message=effective_message,
+                    nlu_result={**nlu_understanding, "language_detected": detected_language_code},
+                    user_context={"user_id": current_user.patient_id, "session_id": session.get('session_record_id')},
+                    conversation_history=nlu_history
                 )
 
+        # Clean only the response text
         if action_payload.get("response"):
             action_payload["response"] = clean_ai_response(action_payload["response"])
 
+        # Save conversation turn with action fields
         turn = ConversationTurn(
-            user_id=current_user.id, user_message=user_message, bot_response=json.dumps(action_payload),
-            detected_intent=nlu_understanding.get('primary_intent'), action_triggered=action_payload.get("action")
+            user_id=current_user.id,
+            user_message=effective_message,
+            bot_response=json.dumps(action_payload), # Store the whole JSON payload
+            detected_intent=nlu_understanding.get('primary_intent'),
+            intent_confidence=nlu_understanding.get('confidence', 0.5),
+            language_detected=detected_language_code,
+            urgency_level=nlu_understanding.get('urgency_level', 'low'),
+            response_time_ms=int((time.time() - start_time) * 1000),
+            action_triggered=action_payload.get("action"),
         )
+        turn.set_action_parameters(action_payload.get("parameters", {}))
+        turn.set_context_entities(nlu_understanding.get('context_entities', {}))
         db.session.add(turn)
+
+        # Update session counters
+        try:
+            session_record_id = session.get('session_record_id')
+            if session_record_id:
+                user_session = UserSession.query.get(session_record_id)
+                if user_session:
+                    user_session.conversations_in_session += 1
+                    user_session.actions_triggered_in_session += 1
+        except Exception:
+            pass
+
         db.session.commit()
 
-        return jsonify({**action_payload, "analysis": nlu_understanding})
+        # Final envelope including analysis metadata
+        enriched = {
+            **action_payload,
+            "analysis": {
+                "intent": nlu_understanding.get('primary_intent'),
+                "confidence": nlu_understanding.get('confidence', 0.5),
+                "language": detected_language_code,
+                "urgency": nlu_understanding.get('urgency_level', 'low'),
+                "in_scope": nlu_understanding.get('in_scope', True),
+            },
+            "system_info": {
+                "response_time_ms": int((time.time() - start_time) * 1000),
+                "api_available": bool(sehat_sahara_client and sehat_sahara_client.is_available)
+            }
+        }
+        return jsonify(enriched)
+
     except Exception as e:
-        logger.error(f"Predict error for user {current_user.patient_id}: {e}", exc_info=True)
-        return jsonify({"error": True, "message": "Unable to process message."}), 500
+        logger.error(f"Error in predict for user {data.get('userId', 'unknown')}: {e}")
+        logger.error(traceback.format_exc())
+        update_system_state('predict', success=False)
+
+        error_response = {
+            "error": True,
+            "message": "Unable to process message at the moment.",
+            "fallback_resources": {
+                "emergency_services": "108",
+                "health_helpline": "104"
+            }
+        }
+        return jsonify(error_response), 500
+
+# (deleted)
 
 @app.route("/v1/book-doctor", methods=["POST"])
 def book_doctor():
-    # --- FIX #2: USE SESSION FOR AUTHENTICATION ---
-    user = get_current_user()
-    if not user:
-        return jsonify({"error": "Authentication required"}), 401
-
     try:
+        update_system_state('book_doctor')
         data = request.get_json() or {}
-        doctor_id_str = data.get("doctorId")
-        appointment_dt_str = data.get("appointmentDatetime")
-        
-        if not doctor_id_str or not appointment_dt_str:
-            return jsonify({"error": "doctorId and appointmentDatetime are required"}), 400
+        user_id_str = (data.get("userId") or "").strip()
+        doctor_id_str = (data.get("doctorId") or "").strip()
+        appointment_dt = (data.get("appointmentDatetime") or "").strip()
+        appointment_type = (data.get("appointmentType") or "consultation").strip()
+        chief_complaint = (data.get("chiefComplaint") or "").strip()
+        symptoms = data.get("symptoms") or []
 
-        doctor = Doctor.query.get(doctor_id_str)
-        if not doctor: return jsonify({"error": "Doctor not found"}), 404
+        if not user_id_str or not doctor_id_str or not appointment_dt:
+            return jsonify({"error": "userId, doctorId and appointmentDatetime are required"}), 400
+
+        user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
+        if not user:
+            return jsonify({"error": "User not found"}), 401
+
+        doctor = Doctor.query.filter(
+            (Doctor.doctor_id == doctor_id_str) | (Doctor.id == doctor_id_str)
+        ).first()
+        if not doctor:
+            return jsonify({"error": "Doctor not found"}), 404
+
+        # Parse datetime in ISO format
+        try:
+            when = datetime.fromisoformat(appointment_dt)
+        except Exception:
+            return jsonify({"error": "Invalid appointmentDatetime. Use ISO 8601 format."}), 400
 
         appt = Appointment(
-            user_id=user.id, doctor_id=doctor.id,
-            appointment_datetime=datetime.fromisoformat(appointment_dt_str),
-            appointment_type=data.get("appointmentType", "consultation"),
-            chief_complaint=data.get("chiefComplaint", "General Consultation")
+            user_id=user.id,
+            doctor_id=doctor.id,
+            appointment_datetime=when,
+            appointment_type=appointment_type,
+            chief_complaint=chief_complaint
         )
+        appt.set_symptoms(symptoms)
         db.session.add(appt)
-        db.session.commit()
 
-        return jsonify({"success": True, "message": "Appointment created.", "appointmentId": appt.appointment_id})
+        # Update session counters
+        try:
+            session_record_id = session.get('session_record_id')
+            if session_record_id:
+                s = UserSession.query.get(session_record_id)
+                if s:
+                    s.appointments_booked_in_session += 1
+        except Exception:
+            pass
+
+        db.session.commit()
+        update_system_state('book_doctor', appointments_booked=1)
+
+        return jsonify({
+            "success": True,
+            "message": "Appointment created.",
+            "appointment": {
+                "appointmentId": appt.appointment_id,
+                "doctor": {"id": doctor.doctor_id, "name": doctor.full_name, "specialization": doctor.specialization},
+                "datetime": appt.appointment_datetime.isoformat(),
+                "type": appt.appointment_type,
+                "status": appt.status
+            }
+        })
     except Exception as e:
-        logger.error(f"Book doctor error: {e}", exc_info=True)
-        db.session.rollback()
+        logger.error(f"Book doctor error: {e}")
+        logger.error(traceback.format_exc())
+        update_system_state('book_doctor', success=False)
         return jsonify({"error": "Failed to book appointment"}), 500
 
-
-# (The rest of the file remains the same, but with similar security fixes)
-@app.route("/v1/history", methods=["GET"])
+@app.route("/v1/history", methods=["POST"])
 def get_history():
-    current_user = get_current_user()
-    if not current_user: return jsonify({"error": "Authentication required"}), 401
-    
-    turns = ConversationTurn.query.filter_by(user_id=current_user.id).order_by(ConversationTurn.timestamp.asc()).limit(100).all()
-    chat_log = [{"role": "user", "content": t.user_message} for t in turns]
-    return jsonify({"success": True, "history": chat_log})
+    """Get comprehensive conversation history with analytics"""
+    try:
+        update_system_state('get_history')
+        data = request.get_json()
 
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
 
-@app.route("/v1/user-stats", methods=["GET"])
+        user_id_str = data.get("userId", "")
+        limit = min(data.get("limit", 50), 100)
+        include_analysis = data.get("includeAnalysis", False)
+
+        if not user_id_str:
+            return jsonify({"error": "User ID is required"}), 400
+
+        current_user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
+        if not current_user:
+            return jsonify({"error": "User not found"}), 401
+
+        # Get conversation turns with ordering
+        turns = ConversationTurn.query.filter_by(user_id=current_user.id)\
+                .order_by(ConversationTurn.timestamp.asc())\
+                .limit(limit).all()
+
+        # Format conversation history
+        chat_log = []
+        for turn in turns:
+            # User message
+            user_entry = {
+                "role": "user",
+                "content": turn.user_message,
+                "timestamp": turn.timestamp.isoformat(),
+                "turn_id": turn.id
+            }
+
+            # Assistant response with optional analysis
+            assistant_entry = {
+                "role": "assistant",
+                "content": turn.bot_response,
+                "timestamp": turn.timestamp.isoformat(),
+                "turn_id": turn.id
+            }
+
+            if include_analysis:
+                assistant_entry["analysis"] = {
+                    "intent": turn.detected_intent,
+                    "confidence": turn.intent_confidence,
+                    "language": turn.language_detected,
+                    "urgency": turn.urgency_level,
+                    "action": turn.action_triggered,
+                    "action_parameters": turn.get_action_parameters(),
+                    "context_entities": turn.get_context_entities()
+                }
+
+            chat_log.extend([user_entry, assistant_entry])
+
+        # Get user progress summary
+        user_summary = conversation_memory.get_user_summary(user_id_str) if conversation_memory else {}
+
+        response_data = {
+            "success": True,
+            "history": chat_log,
+            "summary": {
+                "total_conversations": current_user.total_conversations,
+                "current_stage": current_user.current_conversation_stage,
+                "risk_level": current_user.current_risk_level,
+                "improvement_trend": current_user.improvement_trend,
+                "member_since": current_user.created_at.isoformat(),
+                "last_interaction": current_user.last_login.isoformat() if current_user.last_login else None
+            }
+        }
+
+        # Add detailed progress if available
+        if user_summary.get('exists'):
+            response_data["progress_analytics"] = user_summary.get('progress_metrics', {})
+            response_data["method_analytics"] = user_summary.get('method_effectiveness', {})
+            response_data["risk_assessment"] = user_summary.get('risk_assessment', {})
+
+        logger.info(f"✅ History retrieved for {user_id_str}: {len(turns)} turns")
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        logger.error(f"❌ History retrieval error: {e}")
+        logger.error(traceback.format_exc())
+        update_system_state('get_history', success=False)
+
+        return jsonify({
+            "error": "Failed to retrieve conversation history",
+            "message": "Please try again later"
+        }), 500
+
+@app.route("/v1/user-stats", methods=["POST"])
 def get_user_stats():
-    current_user = get_current_user()
-    if not current_user: return jsonify({"error": "Authentication required"}), 401
-    
-    stats = get_user_statistics(current_user.id) or {}
-    return jsonify({"success": True, **stats})
+    try:
+        update_system_state('get_user_stats')
+        data = request.get_json() or {}
+        user_id_str = (data.get("userId") or "").strip()
+        if not user_id_str:
+            return jsonify({"error": "User ID is required"}), 400
+        current_user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
+        if not current_user:
+            return jsonify({"error": "User not found"}), 401
 
+        stats = get_user_statistics(current_user.id) or {}
+        return jsonify({"success": True, **stats})
+    except Exception as e:
+        logger.error(f"User stats error: {e}")
+        logger.error(traceback.format_exc())
+        update_system_state('get_user_stats', success=False)
+        return jsonify({"error": "Failed to retrieve user statistics"}), 500
 
 @app.route("/v1/health", methods=["GET"])
 def health_check():
@@ -547,24 +933,80 @@ def health_check():
                 "total_requests": system_state['total_requests'],
                 "successful_responses": system_state['successful_responses'],
                 "error_count": system_state['error_count'],
-                "success_rate": system_state['successful_responses'] / max(system_state['total_requests'], 1)
+                "success_rate": system_state['successful_responses'] / max(system_state['total_requests'], 1),
+                "appointments_booked": system_state.get('appointments_booked', 0),
+                "sos_triggered": system_state.get('sos_triggered', 0),
+                "llama_responses": system_state.get('llama_responses', 0),
+                "fallback_responses": system_state.get('fallback_responses', 0)
             }
         }
+
+        # Database health check
+        try:
+            with app.app_context():
+                total_users = User.query.count()
+                total_conversations = ConversationTurn.query.count()
+                health_status["database"] = {
+                    "status": "connected",
+                    "total_users": total_users,
+                    "total_conversations": total_conversations
+                }
+        except Exception as e:
+            health_status["database"] = {
+                "status": "error",
+                "error": str(e)
+            }
+            health_status["status"] = "degraded"
+
+        # Overall health assessment
+        critical_components = ['nlu_processor', 'response_generator', 'conversation_memory', 'database']
+        if not all(system_status.get(comp, False) for comp in critical_components):
+            health_status["status"] = "degraded"
+
         return jsonify(health_status)
+
     except Exception as e:
         logger.error(f"❌ Health check error: {e}")
-        return jsonify({"status": "error", "error": str(e)}), 500
+        return jsonify({
+            "status": "error",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e)
+        }), 500
 
 @app.route("/v1/admin/metrics", methods=["GET"])
 @admin_required
 def get_system_metrics():
     """Provides system-wide metrics for the admin dashboard."""
     try:
+        # Get last 30 days of metrics
         thirty_days_ago = (datetime.now() - timedelta(days=30)).date()
         recent_metrics = SystemMetrics.query.filter(SystemMetrics.metrics_date >= thirty_days_ago).order_by(SystemMetrics.metrics_date.desc()).all()
-        metrics_data = [{"date": m.metrics_date.isoformat(), "activeUsers": m.total_active_users} for m in recent_metrics]
-        current_stats = {"totalUsers": User.query.count()}
-        return jsonify({"success": True, "historicalMetrics": metrics_data, "currentStats": current_stats})
+
+        metrics_data = [
+            {
+                "date": metric.metrics_date.isoformat(),
+                "activeUsers": metric.total_active_users,
+                "newUsers": metric.new_users_registered,
+                "conversations": metric.total_conversations,
+                "appointments": metric.appointments_booked,
+                "orders": metric.orders_placed
+            } for metric in recent_metrics
+        ]
+
+        # Get current high-level stats
+        current_stats = {
+            "totalUsers": User.query.count(),
+            "totalDoctors": Doctor.query.count(),
+            "totalPharmacies": Pharmacy.query.count(),
+            "pendingGrievances": GrievanceReport.query.filter_by(status='Pending').count()
+        }
+
+        return jsonify({
+            "success": True,
+            "historicalMetrics": metrics_data,
+            "currentStats": current_stats
+        })
+
     except Exception as e:
         logger.error(f"❌ Metrics retrieval error: {e}", exc_info=True)
         return jsonify({"error": "Failed to retrieve system metrics"}), 500
