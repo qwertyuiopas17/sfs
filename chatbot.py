@@ -565,13 +565,14 @@ def predict():
         update_system_state('predict')
 
         data = request.get_json() or {}
+        logger.info(f"Request data: {data}")
         user_message = (data.get("message") or "").strip()
         image_b64 = data.get("imageData")
         user_id_str = (data.get("userId") or "").strip()
         context = data.get("context", {}) or {}
 
         # Add logging to track incoming requests
-        logger.info(f"🔍 /v1/predict called - userId: {user_id_str}, message: {user_message[:100]}...")
+        logger.info(f"🔍 /v1/predict called - userId: '{user_id_str}', message: '{user_message[:100]}...'")
 
         if not user_id_str:
             return jsonify({"error": "User ID is required."}), 400
@@ -580,6 +581,7 @@ def predict():
 
         # Load current user by patient_id
         current_user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
+        logger.info(f"User lookup: user_id_str='{user_id_str}', current_user={current_user is not None}")
         if not current_user:
             return jsonify({"error": "User not found.", "login_required": True}), 401
 
@@ -1791,3 +1793,4 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
