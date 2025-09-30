@@ -1923,57 +1923,6 @@ def display_startup_info():
     print("SYSTEM READY - SEHAT SAHARA ACTIVE")
     print("=" * 100)
 
-# --- TEMPORARY ADMIN-ONLY ENDPOINT ---
-# IMPORTANT: Remove this endpoint after you run it once for security.
-@app.route("/v1/seed-initial-doctors-a9b3c8d7e6f5")
-def seed_the_database():
-    """
-    This is a temporary, secret endpoint to add the initial doctors 
-    to the database since there is no shell access on the free tier.
-    """
-    try:
-        from werkzeug.security import generate_password_hash
-
-        doctors_to_add = [
-             {
-                "doctor_id": "DOC001", "full_name": "Aarav Sharma", "specialization": "Cardiologist",
-                "email": "aarav.sharma@clinic.com", "password": "password123",
-                "profile_image_url": "https://images.unsplash.com/photo-1612349317150-e413f6a5b16e?q=80&w=2070&auto=format&fit=crop"
-            },
-            {
-                "doctor_id": "DOC002", "full_name": "Priya Singh", "specialization": "Dermatologist",
-                "email": "priya.singh@clinic.com", "password": "password123",
-                "profile_image_url": "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?q=80&w=2070&auto=format&fit=crop"
-            },
-            {
-                "doctor_id": "DOC003", "full_name": "Rohan Mehta", "specialization": "Pediatrician",
-                "email": "rohan.mehta@clinic.com", "password": "password123",
-                "profile_image_url": "https://images.unsplash.com/photo-1537368910025-700350796527?q=80&w=2070&auto=format&fit=crop"
-            }
-        ]
-        
-        for doc_data in doctors_to_add:
-            existing_doctor = Doctor.query.filter_by(doctor_id=doc_data["doctor_id"]).first()
-            if not existing_doctor:
-                new_doctor = Doctor(
-                    doctor_id=doc_data["doctor_id"],
-                    full_name=doc_data["full_name"],
-                    specialization=doc_data["specialization"],
-                    email=doc_data["email"],
-                    # --- THIS IS THE FINAL CORRECTED FIELD NAME ---
-                    password_hash=generate_password_hash(doc_data["password"]),
-                    profile_image_url=doc_data["profile_image_url"],
-                    is_active=True
-                )
-                db.session.add(new_doctor)
-        
-        db.session.commit()
-        return "✅ Successfully seeded the database with 3 doctors!", 200
-
-    except Exception as e:
-        db.session.rollback()
-        import traceback
-        return f"❌ Error seeding database: {str(e)}\n{traceback.format_exc()}", 500
 
 if __name__ == "__main__":
     # Display startup information
@@ -1992,5 +1941,6 @@ if __name__ == "__main__":
     # Start the Flask application
 
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
