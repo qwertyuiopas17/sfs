@@ -125,6 +125,9 @@ class Doctor(db.Model):
     # Timestamps
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    # --- ADD THIS LINE ---
+    profile_image_url = db.Column(db.String(500), nullable=True)
     
     # Relationships
     appointments = db.relationship('Appointment', backref='doctor', lazy=True)
@@ -864,4 +867,5 @@ def get_system_health():
             'database_healthy': False,
             'error': str(e),
             'last_checked': datetime.now().isoformat()
+
         }
