@@ -26,4 +26,6 @@ psycopg2-binary
 python-dotenv
 groq
 langdetect
+bcrypt
+
 
