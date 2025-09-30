@@ -1922,8 +1922,7 @@ def display_startup_info():
     print("=" * 100)
     print("SYSTEM READY - SEHAT SAHARA ACTIVE")
     print("=" * 100)
-# --- TEMPORARY ADMIN-ONLY ENDPOINT ---
-# IMPORTANT: Remove this endpoint after you run it once for security.
+
 # --- TEMPORARY ADMIN-ONLY ENDPOINT ---
 # IMPORTANT: Remove this endpoint after you run it once for security.
 @app.route("/v1/seed-initial-doctors-a9b3c8d7e6f5")
@@ -1937,27 +1936,18 @@ def seed_the_database():
 
         doctors_to_add = [
              {
-                "doctor_id": "DOC001",
-                "full_name": "Aarav Sharma",
-                "specialization": "Cardiologist",
-                "email": "aarav.sharma@clinic.com",
-                "password": "password123",
+                "doctor_id": "DOC001", "full_name": "Aarav Sharma", "specialization": "Cardiologist",
+                "email": "aarav.sharma@clinic.com", "password": "password123",
                 "profile_image_url": "https://images.unsplash.com/photo-1612349317150-e413f6a5b16e?q=80&w=2070&auto=format&fit=crop"
             },
             {
-                "doctor_id": "DOC002",
-                "full_name": "Priya Singh",
-                "specialization": "Dermatologist",
-                "email": "priya.singh@clinic.com",
-                "password": "password123",
+                "doctor_id": "DOC002", "full_name": "Priya Singh", "specialization": "Dermatologist",
+                "email": "priya.singh@clinic.com", "password": "password123",
                 "profile_image_url": "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?q=80&w=2070&auto=format&fit=crop"
             },
             {
-                "doctor_id": "DOC003",
-                "full_name": "Rohan Mehta",
-                "specialization": "Pediatrician",
-                "email": "rohan.mehta@clinic.com",
-                "password": "password123",
+                "doctor_id": "DOC003", "full_name": "Rohan Mehta", "specialization": "Pediatrician",
+                "email": "rohan.mehta@clinic.com", "password": "password123",
                 "profile_image_url": "https://images.unsplash.com/photo-1537368910025-700350796527?q=80&w=2070&auto=format&fit=crop"
             }
         ]
@@ -1965,14 +1955,13 @@ def seed_the_database():
         for doc_data in doctors_to_add:
             existing_doctor = Doctor.query.filter_by(doctor_id=doc_data["doctor_id"]).first()
             if not existing_doctor:
-                
                 new_doctor = Doctor(
                     doctor_id=doc_data["doctor_id"],
                     full_name=doc_data["full_name"],
                     specialization=doc_data["specialization"],
                     email=doc_data["email"],
-                    # --- THIS IS THE CORRECTED LINE ---
-                    hashed_password=generate_password_hash(doc_data["password"]),
+                    # --- THIS IS THE FINAL CORRECTED FIELD NAME ---
+                    password_hash=generate_password_hash(doc_data["password"]),
                     profile_image_url=doc_data["profile_image_url"],
                     is_active=True
                 )
@@ -1983,7 +1972,6 @@ def seed_the_database():
 
     except Exception as e:
         db.session.rollback()
-        # Provide a more detailed error message for debugging
         import traceback
         return f"❌ Error seeding database: {str(e)}\n{traceback.format_exc()}", 500
 
@@ -2004,4 +1992,5 @@ if __name__ == "__main__":
     # Start the Flask application
 
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
