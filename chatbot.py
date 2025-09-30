@@ -472,106 +472,66 @@ def register():
 
 @app.route("/v1/login", methods=["POST"])
 def login():
-    """
-    Handles login for both patients (users) and doctors.
-    Preserves all original patient login functionalities like session tracking and statistics.
-    """
     try:
         update_system_state('login')
         data = request.get_json() or {}
-        
-        # Use a generic 'identifier' field from the frontend
-        identifier = data.get("identifier", "").strip()
+        login_identifier = data.get("patientId", "").strip()
         password = data.get("password", "")
-        # Default to 'patient' if role is not specified
-        role = data.get("role", "patient").strip()
 
-        if not identifier or not password:
-            return jsonify({"success": False, "message": "Identifier and password are required."}), 400
+        if not login_identifier or not password:
+            return jsonify({"success": False, "message": "Username and password are required."}), 400
 
-        # --- DOCTOR LOGIN LOGIC ---
-        if role == 'doctor':
-            doctor = Doctor.query.filter(
-                (Doctor.doctor_id == identifier.upper()) | (Doctor.email == identifier.lower())
-            ).first()
+        # --- FIX: Enhanced query to find user by email, patient_id, or full_name ---
+        user = None
+        if '@' in login_identifier:
+            user = User.query.filter_by(email=login_identifier.lower()).first()
+        elif login_identifier.upper().startswith('PAT'):
+            user = User.query.filter_by(patient_id=login_identifier.upper()).first()
 
-            if doctor and doctor.is_active and doctor.check_password(password):
-                # Basic session setup for doctors
-                session.permanent = True
-                session['user_id'] = doctor.id
-                session['doctor_id'] = doctor.doctor_id
-                session['role'] = 'doctor'
-                session['login_time'] = datetime.now().isoformat()
-                
-                logger.info(f"✅ Doctor login successful: {doctor.full_name} ({doctor.doctor_id})")
-                return jsonify({
-                    "success": True,
-                    "message": f"Welcome back, Dr. {doctor.full_name}!",
-                    "role": "doctor",
-                    "doctor": {
-                        "doctorId": doctor.doctor_id,
-                        "name": doctor.full_name,
-                        "specialization": doctor.specialization
-                    }
-                })
-            else:
-                logger.warning(f"⚠️ Failed doctor login attempt for identifier: '{identifier}'")
-                update_system_state('login', success=False)
-                return jsonify({"success": False, "message": "Invalid credentials or account inactive."}), 401
+        # Fallback to check by name if not found by email or ID
+        if not user:
+            user = User.query.filter_by(full_name=login_identifier).first()
 
-        # --- PATIENT (USER) LOGIN LOGIC (Original functionality preserved) ---
-        else:
-            user = None
-            if '@' in identifier:
-                user = User.query.filter_by(email=identifier.lower()).first()
-            elif identifier.upper().startswith('PAT'):
-                user = User.query.filter_by(patient_id=identifier.upper()).first()
-            else: # Fallback to check by name
-                user = User.query.filter_by(full_name=identifier).first()
+        if user and user.is_active and user.check_password(password):
+            user.update_last_login()
+            db.session.commit()
+            session.permanent = True
+            session['user_id'] = user.id
+            session['patient_id'] = user.patient_id
+            session['login_time'] = datetime.now().isoformat()
 
-            if user and user.is_active and user.check_password(password):
-                user.update_last_login()
-                db.session.commit()
-                
-                # All original session and tracking logic is here
-                session.permanent = True
-                session['user_id'] = user.id
-                session['patient_id'] = user.patient_id
-                session['role'] = 'patient'
-                session['login_time'] = datetime.now().isoformat()
+            create_user_session(user, {
+                'remote_addr': request.environ.get('REMOTE_ADDR'),
+                'user_agent': request.environ.get('HTTP_USER_AGENT')
+            })
 
-                create_user_session(user, {
-                    'remote_addr': request.environ.get('REMOTE_ADDR'),
-                    'user_agent': request.environ.get('HTTP_USER_AGENT')
-                })
+            stats = get_user_statistics(user.id) or {}
 
-                stats = get_user_statistics(user.id) or {}
-
-                logger.info(f"✅ User login successful: {user.full_name} ({user.patient_id}) with role '{user.role}'")
-                return jsonify({
-                    "success": True,
-                    "message": f"Welcome back, {user.full_name}!",
-                    "user": {
-                        "patientId": user.patient_id,
-                        "username": user.full_name,
-                        "email": user.email,
-                        "role": user.role
-                    },
-                    "statistics": stats
-                })
-            elif user and not user.is_active:
-                return jsonify({"success": False, "message": "This account is inactive."}), 403
-            else:
-                logger.warning(f"⚠️ Failed patient login attempt for identifier: '{identifier}'")
-                update_system_state('login', success=False)
-                return jsonify({"success": False, "message": "Invalid credentials or account inactive."}), 401
+            logger.info(f"✅ User login successful: {user.full_name} ({user.patient_id}) with role '{user.role}'")
+            # --- FIX: Return user role to frontend for proper redirection ---
+            return jsonify({
+                "success": True,
+                "message": f"Welcome back, {user.full_name}!",
+                "user": {
+                    "patientId": user.patient_id,
+                    "username": user.full_name,
+                    "email": user.email,
+                    "role": user.role # This is crucial for the frontend
+                },
+                "statistics": stats
+            })
+        if user and not user.is_active:
+             return jsonify({"success": False, "message": "This account is inactive."}), 403
+        
+        logger.warning(f"⚠️ Failed login attempt for identifier: '{login_identifier}'")
+        update_system_state('login', success=False)
+        return jsonify({"success": False, "message": "Invalid credentials or account inactive."}), 401
 
     except Exception as e:
         logger.error(f"❌ Login error: {e}")
         logger.error(traceback.format_exc())
         update_system_state('login', success=False)
         return jsonify({"success": False, "message": "Login failed due to a server error."}), 500
-
 
 @app.route("/v1/logout", methods=["POST"])
 def logout():
@@ -1980,6 +1940,7 @@ if __name__ == "__main__":
     # Start the Flask application
 
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
