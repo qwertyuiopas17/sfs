@@ -823,28 +823,35 @@ def predict():
 
 # (deleted)
 
+from datetime import datetime # Make sure datetime is imported at the top of your file
+
 @app.route("/v1/book-doctor", methods=["POST"])
 def book_doctor():
+    # --- Re-introduce secure, session-based user authentication ---
+    user = get_current_user()
+    if not user:
+        return jsonify({"error": "Authentication required"}), 401
+    
     try:
         update_system_state('book_doctor')
         data = request.get_json() or {}
-        user_id_str = (data.get("userId") or "").strip()
+        
+        # --- Remove the insecure userId lookup ---
+        # user_id_str = (data.get("userId") or "").strip() # This line is removed
+        
         doctor_id_str = str(data.get("doctorId") or "").strip()
         appointment_dt = (data.get("appointmentDatetime") or "").strip()
         appointment_type = (data.get("appointmentType") or "consultation").strip()
         chief_complaint = (data.get("chiefComplaint") or "").strip()
         symptoms = data.get("symptoms") or []
 
-        if not user_id_str or not doctor_id_str or not appointment_dt:
-            return jsonify({"error": "userId, doctorId and appointmentDatetime are required"}), 400
+        if not doctor_id_str or not appointment_dt:
+            # The userId requirement is removed from the error message
+            return jsonify({"error": "doctorId and appointmentDatetime are required"}), 400
 
-        user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
-        if not user:
-            return jsonify({"error": "User not found"}), 401
-
-        doctor = Doctor.query.filter(
-            (Doctor.doctor_id == doctor_id_str) | (Doctor.id == doctor_id_str)
-        ).first()
+        # The check for the user is no longer needed here as it's handled by get_current_user()
+        
+        doctor = Doctor.query.filter_by(doctor_id=doctor_id_str).first()
         if not doctor:
             return jsonify({"error": "Doctor not found"}), 404
 
@@ -864,7 +871,7 @@ def book_doctor():
         appt.set_symptoms(symptoms)
         db.session.add(appt)
 
-        # Update session counters
+        # Update session counters (this part is fine)
         try:
             session_record_id = session.get('session_record_id')
             if session_record_id:
@@ -2061,6 +2068,7 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
