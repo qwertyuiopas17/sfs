@@ -337,14 +337,16 @@ def get_current_user(user_id_param=None):
     # Fallback to userId parameter if provided
     if user_id_param:
         try:
-            user = User.query.filter_by(patientid=user_id_param, is_active=True).first()
+            # FIX: Use patient_id instead of patientid
+            user = User.query.filter_by(patient_id=user_id_param, is_active=True).first()
             if user:
                 logger.info(f'User authenticated via userId parameter: {user_id_param}')
                 return user
         except Exception as e:
-            logger.error(f'Error retrieving user by patientId {user_id_param}: {e}')
+            logger.error(f'Error retrieving user by patient_id {user_id_param}: {e}')
     
     return None
+
 
 
 def admin_required(f):
@@ -2059,4 +2061,5 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
