@@ -320,21 +320,32 @@ def track_system_metrics():
         logger.error(f"❌ Error tracking system metrics: {e}")
         db.session.rollback()
 
-def get_current_user():
-    """Security helper to get current authenticated user"""
-    user_id = session.get('user_id')
+def get_current_user(user_id_param=None):
+    """Security helper to get current authenticated user
+    Supports both session-based auth and userId parameter fallback"""
+    
+    # First try session-based authentication
+    user_id = session.get('userId')
     if user_id:
         try:
-            # Fetch user with role information
             user = User.query.get(user_id)
-            if user:
-                # Dynamically add role if it exists on the model, otherwise default
-                user.role = getattr(user, 'role', 'patient')
-            return user
+            if user and user.is_active:
+                return user
         except Exception as e:
-            logger.error(f"Error retrieving user {user_id}: {e}")
-            return None
+            logger.error(f'Error retrieving user {user_id}: {e}')
+    
+    # Fallback to userId parameter if provided
+    if user_id_param:
+        try:
+            user = User.query.filter_by(patientid=user_id_param, is_active=True).first()
+            if user:
+                logger.info(f'User authenticated via userId parameter: {user_id_param}')
+                return user
+        except Exception as e:
+            logger.error(f'Error retrieving user by patientId {user_id_param}: {e}')
+    
     return None
+
 
 def admin_required(f):
     @wraps(f)
@@ -1429,20 +1440,19 @@ def get_doctors():
         update_system_state('get_doctors', success=False)
         return jsonify({"success": False, "message": "Failed to retrieve doctors"}), 500
 
-@app.route("/v1/appointments", methods=["GET"])
+@app.route('/v1/appointments', methods=['GET'])
 def get_appointments():
-    """Get user's appointments"""
     try:
-        update_system_state('get_appointments')
-
-        current_user = get_current_user()
+        # Get userId from query parameter
+        user_id_param = request.args.get('userId')
+        
+        # Get current user (session or parameter)
+        current_user = get_current_user(user_id_param)
         if not current_user:
-            # Allow userId in query param for frontend compatibility
-            user_id_str = request.args.get('userId')
-            if user_id_str:
-                current_user = User.query.filter_by(patient_id=user_id_str, is_active=True).first()
-            if not current_user:
-                return jsonify({"success": False, "message": "Authentication required"}), 401
+            return jsonify({'success': False, 'message': 'Authentication required'}, 401)
+        
+        # Rest of your existing logic remains unchanged...
+
 
         appointments = Appointment.query.filter_by(user_id=current_user.id)\
             .order_by(Appointment.appointment_datetime.desc()).all()
@@ -2049,3 +2059,4 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
