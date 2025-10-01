@@ -1950,19 +1950,6 @@ def schedule_periodic_tasks():
     scheduler_thread.start()
     logger.info("✅ Periodic task scheduler started")
 
-
-# Root handler to satisfy uptime probes and browser requests
-@app.route("/", methods=["GET", "HEAD"])
-def root():
-    return jsonify({
-        "status": "ok",
-        "service": "Sehat Sahara API",
-        "version": "2.1.0",
-        "endpoints_base": "/v1"
-    }), 200
-# Error handlers
-
-
 @app.route("/v1/specialties", methods=["GET"])
 def get_specialties():
     """Get a list of unique, active doctor specializations."""
@@ -1980,6 +1967,18 @@ def get_specialties():
         logger.error(f"Get specialties error: {e}")
         return jsonify({"success": False, "message": "Failed to retrieve specialties"}), 500
         
+# Root handler to satisfy uptime probes and browser requests
+@app.route("/", methods=["GET", "HEAD"])
+def root():
+    return jsonify({
+        "status": "ok",
+        "service": "Sehat Sahara API",
+        "version": "2.1.0",
+        "endpoints_base": "/v1"
+    }), 200
+# Error handlers
+
+
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({
@@ -2087,6 +2086,7 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
