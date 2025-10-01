@@ -91,7 +91,7 @@ CORS(app, supports_credentials=True, resources={
             "*"  # Allow all origins for development and static files
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
-        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-CSRFToken"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "X-User-Id", "Accept", "Origin", "X-CSRFToken"],
         "expose_headers": ["Content-Type", "X-CSRFToken"],
         "supports_credentials": True
     }
@@ -2061,5 +2061,6 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
