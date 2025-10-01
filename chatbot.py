@@ -1961,6 +1961,25 @@ def root():
         "endpoints_base": "/v1"
     }), 200
 # Error handlers
+
+
+@app.route("/v1/specialties", methods=["GET"])
+def get_specialties():
+    """Get a list of unique, active doctor specializations."""
+    try:
+        # Query for distinct specializations from active doctors
+        specialties = db.session.query(Doctor.specialization).filter(Doctor.is_active==True).distinct().all()
+        # Flatten the list of tuples into a simple list of strings
+        specialty_list = [spec[0] for spec in specialties if spec[0]]
+        
+        return jsonify({
+            "success": True,
+            "specialties": specialty_list
+        })
+    except Exception as e:
+        logger.error(f"Get specialties error: {e}")
+        return jsonify({"success": False, "message": "Failed to retrieve specialties"}), 500
+        
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({
@@ -2068,6 +2087,7 @@ if __name__ == "__main__":
 
     # Start the Flask application
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
