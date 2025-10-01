@@ -79,27 +79,23 @@ logger = logging.getLogger(__name__)
 # Initialize Flask application with enhanced configuration
 app = Flask(__name__)
 # Enhanced CORS configuration for production
-CORS(app, 
-    supports_credentials=True,
-    resources={
-        r"/v1/*": {
-            "origins": [
-                "http://127.0.0.1:5500",
-                "http://localhost:5500", 
-                "https://sahara-sathi.netlify.app"
-            ],
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": [
-                "Content-Type", 
-                "Authorization", 
-                "X-Requested-With",
-                "Origin",
-                "Accept"
-            ]
-        }
+CORS(app, supports_credentials=True, resources={
+    r"/*": {
+        "origins": [
+            "http://127.0.0.1:5500",
+            "http://localhost:5500",
+            "https://saharasaathi.netlify.app",
+            "https://sahara-sathi.onrender.com",
+            "https://sahara-sathi.onrender.com/",
+            "null",  # Allow null origin for local file testing
+            "*"  # Allow all origins for development and static files
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+        "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin", "X-CSRFToken"],
+        "expose_headers": ["Content-Type", "X-CSRFToken"],
+        "supports_credentials": True
     }
-)
-
+})
 
 
 # Enhanced security configuration
@@ -2052,5 +2048,4 @@ if __name__ == "__main__":
             logger.error(f"Failed to track startup metrics: {e}")
 
     # Start the Flask application
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
-
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
